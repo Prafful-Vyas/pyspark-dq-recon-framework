@@ -1,0 +1,38 @@
+# Card authorisations from the switch, one landing folder per business date.
+name: card_transactions
+source:
+  format: csv
+  path: ${landing}/card_transactions/${run_date}
+  options: { header: "true", timestampFormat: "yyyy-MM-dd'T'HH:mm:ss" }
+schema:
+  - { name: txn_id, type: string, nullable: false }
+  - { name: card_id, type: string, nullable: false }
+  - { name: merchant_id, type: string, nullable: false }
+  - { name: txn_ts, type: timestamp, nullable: false }
+  - { name: amount, type: "decimal(18,2)", nullable: false }
+  - { name: currency, type: string, nullable: false }
+  - { name: channel, type: string }
+  - { name: auth_status, type: string, nullable: false }
+primary_key: [txn_id]
+target:
+  path: ${lake}/card_transactions
+  mode: append
+  partition_by: [_run_date]
+references:
+  merchants: { key: merchant_id }
+reconciliation:
+  sums: [amount]
+rules:
+  # max_failure_pct: tolerate a trickle of bad rows (quarantined), fail the batch
+  # when a defect rate suggests an upstream break.
+  - { name: amount_positive, type: range, column: amount, params: { min: 0.01, max: 1000000 }, max_failure_pct: 1 }
+  - { name: currency_supported, type: in_set, column: currency, params: { values: [GBP, USD, EUR, INR] }, max_failure_pct: 1 }
+  - { name: card_masked, type: regex, column: card_id, params: { pattern: '^[0-9]{6}[*]{6}[0-9]{4}$' }, max_failure_pct: 0.5 }
+  - { name: merchant_known, type: referential, column: merchant_id, params: { reference: merchants }, max_failure_pct: 2 }
+  - { name: not_in_future, type: not_future, column: txn_ts, params: { tolerance_minutes: 5 } }
+  - { name: status_known, type: in_set, column: auth_status, params: { values: [APPROVED, DECLINED, REVERSED] } }
+  - { name: channel_known, type: in_set, column: channel, severity: warn, params: { values: [POS, ECOM, ATM, CONTACTLESS] } }
+  - { name: declined_has_no_settlement_amount, type: expression, severity: warn,
+      params: { expr: "auth_status <> 'DECLINED' OR amount < 50000" } }
+  - { name: volume, type: min_rows, params: { min: 100 } }
+  - { name: fresh, type: freshness, column: txn_ts, params: { max_age_hours: 96 } }

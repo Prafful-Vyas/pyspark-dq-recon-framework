@@ -1,0 +1,43 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -e .[dev]
+      - run: ruff check .
+      - run: pytest -q
+      - name: package Glue artifacts
+        run: |
+          zip -r dqframe.zip dqframe -x '*/__pycache__/*'
+          mkdir -p dist/contracts && cp dqframe.zip dqframe/glue_entry.py dist/ && cp contracts/*.yml dist/contracts/
+      - uses: actions/upload-artifact@v4
+        with: { name: glue-artifacts, path: dist/ }
+
+  dag-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: install Airflow with official constraints
+        run: |
+          pip install "apache-airflow==2.10.3" apache-airflow-providers-amazon \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt"
+      - name: DAG imports without errors and has the expected shape
+        env: { AIRFLOW__CORE__LOAD_EXAMPLES: "false" }
+        run: |
+          python - <<'PY'
+          from airflow.models import DagBag
+          bag = DagBag("airflow/dags", include_examples=False)
+          assert not bag.import_errors, bag.import_errors
+          dag = bag.get_dag("card_ingestion")
+          assert [t.task_id for t in dag.topological_sort()] == [
+              "landing_complete", "merchants", "card_transactions", "publish_dq_metrics"]
+          print("ok", dag.dag_id)
+          PY

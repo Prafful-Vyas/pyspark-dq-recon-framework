@@ -1,0 +1,24 @@
+# Merchant reference data: daily delta from the acquiring platform, kept as SCD2 so
+# a transaction can be joined to the merchant attributes valid on its date.
+name: merchants
+source:
+  format: csv
+  path: ${landing}/merchants/${run_date}
+  options: { header: "true" }
+schema:
+  - { name: merchant_id, type: string, nullable: false }
+  - { name: merchant_name, type: string, nullable: false }
+  - { name: mcc, type: string, nullable: false }
+  - { name: country, type: string, nullable: false }
+  - { name: risk_rating, type: string }
+primary_key: [merchant_id]
+target:
+  path: ${lake}/merchants
+  mode: scd2
+  business_key: [merchant_id]
+  tracked_columns: [merchant_name, mcc, country, risk_rating]
+rules:
+  - { name: mcc_format, type: regex, column: mcc, params: { pattern: "^[0-9]{4}$" } }
+  - { name: country_iso2, type: regex, column: country, params: { pattern: "^[A-Z]{2}$" } }
+  - { name: risk_rating_known, type: in_set, column: risk_rating, severity: warn,
+      params: { values: [LOW, MEDIUM, HIGH] } }
