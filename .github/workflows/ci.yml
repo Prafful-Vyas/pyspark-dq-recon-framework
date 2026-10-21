@@ -29,6 +29,9 @@ jobs:
         run: |
           pip install "apache-airflow==2.10.3" apache-airflow-providers-amazon \
             --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt"
+      - name: initialise the Airflow metadata DB (SQLite)
+        env: { AIRFLOW__CORE__LOAD_EXAMPLES: "false" }
+        run: airflow db migrate
       - name: DAG imports without errors and has the expected shape
         env: { AIRFLOW__CORE__LOAD_EXAMPLES: "false" }
         run: |

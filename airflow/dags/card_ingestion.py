@@ -12,6 +12,7 @@ failure re-run against the same files fails the same way.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 
 from airflow.decorators import dag, task
@@ -20,10 +21,12 @@ from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
 from airflow.providers.amazon.aws.operators.glue import GlueJobOperator
 from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
 
-LANDING = Variable.get("cards_landing", default_var="s3://bank-landing/cards")
-LAKE = Variable.get("cards_lake", default_var="s3://bank-lake/cards")
-ARTIFACTS = Variable.get("dqframe_artifacts", default_var="s3://bank-artifacts/dqframe")
-GLUE_ROLE = Variable.get("dqframe_glue_role", default_var="dqframe-glue")
+# Airflow Variables are resolved as Jinja templates at run time, not at import time:
+# a module-level Variable.get() would query the metadata DB on every scheduler parse.
+LANDING = "{{ var.value.get('cards_landing', 's3://bank-landing/cards') }}"
+LAKE = "{{ var.value.get('cards_lake', 's3://bank-lake/cards') }}"
+ARTIFACTS = "{{ var.value.get('dqframe_artifacts', 's3://bank-artifacts/dqframe') }}"
+GLUE_ROLE = os.environ.get("DQFRAME_GLUE_ROLE", "dqframe-glue")
 
 
 def glue_job(task_id: str, contract: str, references: str = "") -> GlueJobOperator:
@@ -77,7 +80,8 @@ def card_ingestion():
         metrics, so dashboards and alarms do not depend on Athena."""
         s3 = AwsBaseHook(client_type="s3").get_client_type()
         cw = AwsBaseHook(client_type="cloudwatch").get_client_type()
-        bucket, prefix = LAKE.removeprefix("s3://").split("/", 1)
+        lake = Variable.get("cards_lake", default_var="s3://bank-lake/cards")
+        bucket, prefix = lake.removeprefix("s3://").split("/", 1)
         metrics = []
         for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=f"{prefix}/_audit/"):
             for obj in page.get("Contents", []):
